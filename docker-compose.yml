@@ -1,0 +1,38 @@
+# Local demo stack: the transfers service plus Oracle Database Free.
+# Credentials below are for local use only.
+name: transfers-saga
+
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: saga
+      APP_USER_PASSWORD: saga
+    volumes:
+      # Runs once on first start: applies schema.sql and the seed as APP_USER.
+      - ./db/init:/container-entrypoint-initdb.d:ro
+      # The DDL is mounted from the source tree, so it is never duplicated.
+      - ./src/transfers/infrastructure/oracle/schema.sql:/opt/transfers/schema.sql:ro
+      - ./db/seed.sql:/opt/transfers/seed.sql:ro
+    healthcheck:
+      # Ships with the image; healthy only after the init scripts have finished
+      # and FREEPDB1 is open for read/write.
+      test: ["CMD", "healthcheck.sh"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
+  app:
+    build: .
+    depends_on:
+      oracle:
+        condition: service_healthy
+    environment:
+      ORACLE_USER: saga
+      ORACLE_PASSWORD: saga
+      ORACLE_CONNECT_STRING: oracle:1521/FREEPDB1
+      PORT: "3000"
+    ports:
+      - "3000:3000"

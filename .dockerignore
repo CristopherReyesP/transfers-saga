@@ -1,0 +1,13 @@
+# Allowlist: the image only needs the npm manifests, the build configs, and
+# the production sources. Everything else stays out of the build context.
+*
+!package.json
+!package-lock.json
+!nest-cli.json
+!tsconfig.json
+!tsconfig.build.json
+!src/
+
+# Specs are not compiled, so changing one should not bust the build cache.
+src/**/*.spec.ts
+src/**/*.int-spec.ts
