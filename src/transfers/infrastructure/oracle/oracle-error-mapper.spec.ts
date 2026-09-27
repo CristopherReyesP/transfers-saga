@@ -28,7 +28,7 @@ describe('rethrowOracleError', () => {
       ),
     );
     expect(thrown).toBeInstanceOf(AccountLocked);
-    expect((thrown as Error).message).toBe('subject-1');
+    expect((thrown as AccountLocked).accountId).toBe('subject-1');
   });
 
   it('maps ORA-00001 on the idempotency key constraint to DuplicateIdempotencyKey', () => {
@@ -39,7 +39,9 @@ describe('rethrowOracleError', () => {
       ),
     );
     expect(thrown).toBeInstanceOf(DuplicateIdempotencyKey);
-    expect((thrown as Error).message).toBe('subject-1');
+    expect((thrown as DuplicateIdempotencyKey).idempotencyKey).toBe(
+      'subject-1',
+    );
   });
 
   it.each([
