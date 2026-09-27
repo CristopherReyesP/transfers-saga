@@ -1,4 +1,8 @@
-import { CurrencyMismatch, InvalidAmount, InvalidCurrency } from './domain-errors.js';
+import {
+  CurrencyMismatch,
+  InvalidAmount,
+  InvalidCurrency,
+} from './domain-errors.js';
 import { Money } from './money.js';
 
 describe('Money', () => {
