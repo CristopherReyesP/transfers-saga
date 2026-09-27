@@ -1,14 +1,13 @@
 {
   "name": "transfers-saga",
   "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "description": "Money transfers as an orchestrated Saga on NestJS and Oracle: compensation, idempotency keys, NOWAIT row locks, and timeout-aware credits.",
+  "author": "Cristopher Reyes",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "nest build",
-    "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -34,7 +33,6 @@
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
-    "@nestjs/mau": "^0.2.6",
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
     "@types/express": "^5.0.0",
