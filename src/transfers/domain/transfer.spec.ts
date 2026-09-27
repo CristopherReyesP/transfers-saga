@@ -4,7 +4,11 @@ import {
   InvalidTransferTransition,
 } from './domain-errors.js';
 import { Money } from './money.js';
-import { Transfer, type TransferStatus } from './transfer.js';
+import {
+  Transfer,
+  type TransferSnapshot,
+  type TransferStatus,
+} from './transfer.js';
 
 const failureReason = 'Destination rejected the credit';
 const request = () =>
@@ -152,6 +156,58 @@ describe('Transfer', () => {
     ['FAILED', true],
   ] as const)('isTerminal for %s is %s', (status, expected) => {
     expect(atStatus(status).isTerminal()).toBe(expected);
+  });
+});
+
+const snapshotOf = (transfer: Transfer): TransferSnapshot => ({
+  id: transfer.id,
+  sourceAccountId: transfer.sourceAccountId,
+  destinationAccount: transfer.destinationAccount,
+  amount: transfer.amount,
+  status: transfer.status,
+  failureReason: transfer.failureReason,
+});
+
+describe('Transfer.rehydrate', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(statuses)(
+    'restores a %s transfer without replaying transitions',
+    (status) => {
+      const snapshot = snapshotOf(atStatus(status));
+      const spies = transitions.map(({ method }) =>
+        vi.spyOn(Transfer.prototype, method),
+      );
+      const transfer = Transfer.rehydrate(snapshot);
+      expect(snapshotOf(transfer)).toEqual(snapshot);
+      expect(transfer.amount.equals(Money.of(100, 'USD'))).toBe(true);
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(transitions)(
+    'continues the state machine: $method moves a restored $from to $to',
+    ({ from, to, run }) => {
+      const transfer = Transfer.rehydrate(snapshotOf(atStatus(from)));
+      run(transfer);
+      expect(transfer.status).toBe(to);
+    },
+  );
+
+  it('keeps guarding transitions from a restored terminal status', () => {
+    const transfer = Transfer.rehydrate(snapshotOf(atStatus('REVERSED')));
+    expect(() => transfer.markReversed()).toThrow(InvalidTransferTransition);
+    expect(transfer.status).toBe('REVERSED');
+    expect(transfer.failureReason).toBe(failureReason);
+  });
+
+  it('rejects a snapshot with a zero amount', () => {
+    const snapshot = snapshotOf(atStatus('COMPLETED'));
+    expect(() =>
+      Transfer.rehydrate({ ...snapshot, amount: Money.of(0, 'USD') }),
+    ).toThrow(InvalidAmount);
   });
 });
 

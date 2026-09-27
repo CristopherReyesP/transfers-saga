@@ -11,6 +11,11 @@ export interface TransferRequest {
   amount: Money;
 }
 
+export interface TransferSnapshot extends TransferRequest {
+  status: TransferStatus;
+  failureReason?: string;
+}
+
 export class Transfer {
   private statusValue: TransferStatus = 'PENDING';
   private failureReasonValue: string | undefined;
@@ -32,6 +37,14 @@ export class Transfer {
       request.destinationAccount,
       request.amount,
     );
+  }
+
+  /** Restores a persisted transfer without replaying its transitions. */
+  static rehydrate(snapshot: TransferSnapshot): Transfer {
+    const transfer = Transfer.request(snapshot);
+    transfer.statusValue = snapshot.status;
+    transfer.failureReasonValue = snapshot.failureReason;
+    return transfer;
   }
 
   markDebited(): void {

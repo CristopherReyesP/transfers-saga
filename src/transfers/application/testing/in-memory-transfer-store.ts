@@ -10,21 +10,7 @@ import type { AccountRepository } from '../ports/account-repository.js';
 import type { TransferRepository } from '../ports/transfer-repository.js';
 import type { TransferUnitOfWork } from '../ports/transfer-unit-of-work.js';
 
-function copyTransfer(transfer: Transfer): Transfer {
-  const copy = Transfer.request(transfer);
-  if (transfer.status === 'FAILED') {
-    copy.markFailed(transfer.failureReason ?? '');
-  } else if (transfer.status !== 'PENDING') {
-    copy.markDebited();
-    if (transfer.status === 'COMPLETED') copy.markCompleted();
-    if (transfer.status === 'COMPENSATING' || transfer.status === 'REVERSED') {
-      copy.startCompensation(transfer.failureReason ?? '');
-      if (transfer.status === 'REVERSED') copy.markReversed();
-    }
-  }
-  return copy;
-}
-
+// Stored transfers are snapshot copies, so callers never mutate committed state.
 export class InMemoryTransferStore implements TransferUnitOfWork {
   private readonly accounts = new Map<string, Money>();
   private readonly transfers = new Map<string, Transfer>();
@@ -63,7 +49,7 @@ export class InMemoryTransferStore implements TransferUnitOfWork {
     const keyWrites = new Map<string, string>();
     const readTransfer = (id: string): Transfer | null => {
       const transfer = transferWrites.get(id) ?? this.transfers.get(id);
-      return transfer ? copyTransfer(transfer) : null;
+      return transfer ? Transfer.rehydrate(transfer) : null;
     };
     this.activeRuns += 1;
     try {
@@ -85,10 +71,10 @@ export class InMemoryTransferStore implements TransferUnitOfWork {
               throw new DuplicateIdempotencyKey(key);
             }
             keyWrites.set(key, transfer.id);
-            transferWrites.set(transfer.id, copyTransfer(transfer));
+            transferWrites.set(transfer.id, Transfer.rehydrate(transfer));
           },
           save: async (transfer) => {
-            transferWrites.set(transfer.id, copyTransfer(transfer));
+            transferWrites.set(transfer.id, Transfer.rehydrate(transfer));
           },
           findById: async (id) => readTransfer(id),
           findByIdempotencyKey: async (key) => {
