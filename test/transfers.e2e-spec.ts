@@ -192,6 +192,36 @@ describe('Transfers HTTP API', () => {
     expect(await readBalance(db.pool, 'source-1')).toBe(1000);
   });
 
+  it('replays an insufficient-funds failure after topping up without debiting', async () => {
+    const body = transferBody({ minorUnits: 5000 });
+    const first = await post('key-1', body);
+
+    expect(first.status).toBe(201);
+    expect(first.body).toMatchObject({
+      id: expect.any(String),
+      status: 'FAILED',
+    });
+    expect(await readBalance(db.pool, 'source-1')).toBe(1000);
+
+    const connection = await db.pool.getConnection();
+    try {
+      await connection.execute(
+        'UPDATE accounts SET balance_minor = :balance WHERE id = :id',
+        { balance: 6000, id: 'source-1' },
+        { autoCommit: true },
+      );
+    } finally {
+      await connection.close();
+    }
+
+    const replay = await post('key-1', body);
+
+    expect(replay.status).toBe(201);
+    expect(replay.body).toEqual(first.body);
+    expect(await readBalance(db.pool, 'source-1')).toBe(6000);
+    expect(await countTransfers(db.pool)).toBe(1);
+  });
+
   it('answers 404 for an unknown source account and persists nothing', async () => {
     const response = await post(
       'key-1',

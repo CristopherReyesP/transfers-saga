@@ -1,3 +1,4 @@
+import oracledb from 'oracledb';
 import {
   readBalance,
   seedAccount,
@@ -7,9 +8,13 @@ import {
   ExecuteTransfer,
   type ExecuteTransferCommand,
 } from '../../application/execute-transfer.js';
+import { TransferInProgress } from '../../application/application-errors.js';
+import type { TransferUnitOfWork } from '../../application/ports/transfer-unit-of-work.js';
 import { GetTransfer } from '../../application/get-transfer.js';
 import { FakeDestinationBank } from '../../application/testing/fake-destination-bank.js';
-import type { TransferStatus } from '../../domain/transfer.js';
+import { Money } from '../../domain/money.js';
+import { Transfer, type TransferStatus } from '../../domain/transfer.js';
+import { OracleTransferRepository } from './oracle-transfer-repository.js';
 import { OracleTransferUnitOfWork } from './oracle-transfer-unit-of-work.js';
 
 const command = (): ExecuteTransferCommand => ({
@@ -63,5 +68,54 @@ describe('ExecuteTransfer on Oracle', () => {
     expect(replay.status).toBe('COMPLETED');
     await expectCommitted('COMPLETED', 700);
     expect(bank.creditCalls).toHaveLength(1);
+  });
+
+  it('rolls back the debit and throws TransferInProgress when another connection wins the insert after replay misses', async () => {
+    const conflicting = Transfer.request({
+      ...command(),
+      id: 'conflicting-transfer',
+      amount: Money.of(300, 'USD'),
+    });
+    conflicting.markDebited();
+    // Keep this connection checked out so the debit uses a different session.
+    const connection = await db.pool.getConnection();
+    try {
+      let runs = 0;
+      const racingUow: TransferUnitOfWork = {
+        run: async (work) => {
+          runs += 1;
+          if (runs === 2) {
+            await new OracleTransferRepository(connection).insert(
+              conflicting,
+              'key-1',
+            );
+            await connection.commit();
+          }
+          return uow.run(work);
+        },
+      };
+      const losingExecute = new ExecuteTransfer(
+        racingUow,
+        bank,
+        () => 'losing-transfer',
+      );
+
+      await expect(losingExecute.execute(command())).rejects.toThrow(
+        TransferInProgress,
+      );
+
+      expect(runs).toBe(2);
+      expect(await readBalance(db.pool, 'source-1')).toBe(1000);
+      const result = await connection.execute<{ ID: string }>(
+        'SELECT id FROM transfers WHERE idempotency_key = :key',
+        { key: 'key-1' },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      expect(result.rows).toEqual([{ ID: conflicting.id }]);
+      expect(bank.creditCalls).toEqual([]);
+      expect(bank.statusCalls).toEqual([]);
+    } finally {
+      await connection.close();
+    }
   });
 });
