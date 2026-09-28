@@ -197,15 +197,55 @@ describe('ExecuteTransfer', () => {
     expect(bank.creditCalls).toHaveLength(1);
   });
 
-  it('replays a completed transfer without another debit or credit', async () => {
-    const { store, bank, execute } = setup();
-    const first = await execute.execute(command());
-    const replay = await execute.execute(command());
-    expect(replay.id).toBe(first.id);
-    await expectCommitted(store, replay, 'COMPLETED', 700);
-    expect(bank.creditCalls).toHaveLength(1);
-    expect(bank.statusCalls).toEqual([]);
-  });
+  it.each([
+    ['COMPLETED', 1000, 700],
+    ['REVERSED', 1000, 1000],
+    ['FAILED', 200, 200],
+  ] as const)(
+    'replays a %s transfer without debit, credit, compensation, or writes',
+    async (status, initialBalance, finalBalance) => {
+      const { store, bank, execute } = setup(initialBalance);
+      if (status === 'REVERSED') {
+        bank.creditOutcomes.push({
+          kind: 'rejected',
+          reason: 'Account closed',
+        });
+      }
+      const first = await execute.execute(command());
+      expect(first.status).toBe(status);
+      const credit = vi.spyOn(bank, 'credit');
+      const getCreditStatus = vi.spyOn(bank, 'getCreditStatus');
+      const uow: TransferUnitOfWork = {
+        run: (work) =>
+          store.run(async ({ accounts, transfers }) => {
+            const getForUpdate = vi.fn(accounts.getForUpdate.bind(accounts));
+            const saveAccount = vi.fn(accounts.save.bind(accounts));
+            const insertTransfer = vi.fn(transfers.insert.bind(transfers));
+            const saveTransfer = vi.fn(transfers.save.bind(transfers));
+            const result = await work({
+              accounts: { getForUpdate, save: saveAccount },
+              transfers: {
+                ...transfers,
+                insert: insertTransfer,
+                save: saveTransfer,
+              },
+            });
+            expect(getForUpdate).not.toHaveBeenCalled();
+            expect(saveAccount).not.toHaveBeenCalled();
+            expect(insertTransfer).not.toHaveBeenCalled();
+            expect(saveTransfer).not.toHaveBeenCalled();
+            return result;
+          }),
+      };
+
+      const replay = await new ExecuteTransfer(uow, bank).execute(command());
+
+      expect(replay).toEqual(first);
+      await expectCommitted(store, replay, status, finalBalance);
+      expect(credit).not.toHaveBeenCalled();
+      expect(getCreditStatus).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['source', { sourceAccountId: 'source-2' }],
