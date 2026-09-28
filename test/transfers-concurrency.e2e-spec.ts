@@ -1,4 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
+import oracledb from 'oracledb';
 import request from 'supertest';
 import type { DestinationBankPort } from '../src/transfers/application/ports/destination-bank.js';
 import {
@@ -6,6 +7,7 @@ import {
   holdRowLock,
   startTransfersApp,
   transferBody,
+  warmAppPool,
 } from './http/transfers-app.js';
 import {
   readBalance,
@@ -63,17 +65,39 @@ describe('Transfers HTTP API under contention', () => {
     });
 
     it('debits once for two concurrent requests with the same key', async () => {
+      await warmAppPool(app, 2);
       const responses = await Promise.all([
         post(app, 'key-1'),
         post(app, 'key-1'),
       ]);
-      const statuses = responses.map((response) => response.status);
+      const winner = responses.find((response) => response.status === 201);
+      expect(winner).toBeDefined();
+      expect(winner?.body.id).toEqual(expect.any(String));
 
-      // The interleaving decides whether the loser sees a lock, an in-flight
-      // transfer, or a finished replay, so only the invariants are asserted.
-      for (const status of statuses) expect([201, 409]).toContain(status);
-      expect(statuses).toContain(201);
-      expect(await countTransfers(db.pool)).toBe(1);
+      // Scheduling determines whether the other request replays or conflicts.
+      for (const response of responses) {
+        if (response.status === 201) {
+          expect(response.body.id).toBe(winner?.body.id);
+        } else {
+          expect(response.status).toBe(409);
+          expect(response.headers['content-type']).toMatch(PROBLEM_JSON);
+          expect(response.body.status).toBe(409);
+          expect(['AccountLocked', 'TransferInProgress']).toContain(
+            response.body.code,
+          );
+        }
+      }
+      const connection = await db.pool.getConnection();
+      try {
+        const result = await connection.execute<{ ID: string }>(
+          'SELECT id FROM transfers WHERE idempotency_key = :key',
+          { key: 'key-1' },
+          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        );
+        expect(result.rows).toEqual([{ ID: winner?.body.id }]);
+      } finally {
+        await connection.close();
+      }
       expect(await readBalance(db.pool, 'source-1')).toBe(700);
     });
 

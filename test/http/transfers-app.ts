@@ -50,6 +50,22 @@ export async function startTransfersApp(
   return app;
 }
 
+/**
+ * Opens `sessions` idle connections in the app's pool. A cold pool creates a
+ * session per request, and that takes longer than a whole transfer, so
+ * "concurrent" requests would otherwise run one after the other.
+ */
+export async function warmAppPool(
+  app: INestApplication,
+  sessions: number,
+): Promise<void> {
+  const pool = app.get<Pool>(ORACLE_POOL);
+  const connections = await Promise.all(
+    Array.from({ length: sessions }, () => pool.getConnection()),
+  );
+  await Promise.all(connections.map((connection) => connection.close()));
+}
+
 export async function countTransfers(pool: Pool): Promise<number> {
   const connection = await pool.getConnection();
   try {
